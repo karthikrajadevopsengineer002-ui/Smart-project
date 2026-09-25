@@ -6,6 +6,8 @@ pipeline {
         stage('Install Dependencies') {
             steps {
                 sh '''
+                    set -e
+
                     cd auth-service_1784011000189
                     npm install
 
@@ -18,11 +20,15 @@ pipeline {
         stage('Docker Build') {
             steps {
                 sh '''
-                    docker build -f auth-service_1784011000189/Dockerfile.deploy \
+                    set -e
+
+                    docker build \
+                      -f auth-service_1784011000189/Dockerfile.deploy \
                       -t smart-task-auth:latest \
                       auth-service_1784011000189
 
-                    docker build -f task-service/Dockerfile.deploy \
+                    docker build \
+                      -f task-service/Dockerfile.deploy \
                       -t smart-task-task:latest \
                       task-service
                 '''
@@ -37,13 +43,52 @@ pipeline {
             }
         }
 
+        stage('Load Images to Minikube') {
+            steps {
+                sh '''
+                    set -e
+
+                    minikube image load smart-task-auth:latest
+                    minikube image load smart-task-task:latest
+                '''
+            }
+        }
+
         stage('Deploy to Kubernetes') {
             steps {
                 sh '''
-                    minikube image load smart-task-auth:latest
-                    minikube image load smart-task-task:latest
+                    set -e
 
-                    kubectl apply -f kubernetes/
+                    echo "Checking Kubernetes..."
+                    kubectl get nodes
+
+                    echo "Creating namespace..."
+                    kubectl apply -f kubernetes/namespace.yaml
+
+                    echo "Waiting for namespace..."
+                    kubectl wait \
+                      --for=jsonpath='{.status.phase}'=Active \
+                      namespace/smart-task \
+                      --timeout=60s
+
+                    echo "Creating secret..."
+                    kubectl apply -f kubernetes/secret.yaml
+
+                    echo "Applying remaining Kubernetes manifests..."
+
+                    for file in kubernetes/*.yaml
+                    do
+                        case "$file" in
+                            kubernetes/namespace.yaml)
+                                ;;
+                            kubernetes/secret.yaml)
+                                ;;
+                            *)
+                                echo "Applying $file"
+                                kubectl apply -f "$file"
+                                ;;
+                        esac
+                    done
                 '''
             }
         }
@@ -51,9 +96,23 @@ pipeline {
         stage('Verify Deployment') {
             steps {
                 sh '''
-                    kubectl get deployments
-                    kubectl get pods
-                    kubectl get services
+                    echo "===== NODES ====="
+                    kubectl get nodes
+
+                    echo "===== NAMESPACE ====="
+                    kubectl get namespace smart-task
+
+                    echo "===== DEPLOYMENTS ====="
+                    kubectl get deployments -n smart-task
+
+                    echo "===== PODS ====="
+                    kubectl get pods -n smart-task
+
+                    echo "===== SERVICES ====="
+                    kubectl get services -n smart-task
+
+                    echo "===== INGRESS ====="
+                    kubectl get ingress -n smart-task
                 '''
             }
         }
@@ -69,6 +128,3 @@ pipeline {
         }
     }
 }
-
-
-
