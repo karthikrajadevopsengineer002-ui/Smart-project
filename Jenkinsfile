@@ -128,3 +128,17 @@ pipeline {
         }
     }
 }
+stage('Frontend Build and S3 Deploy') {
+    steps {
+        sh '''
+            cd frontend
+
+            npm install
+            npm run build
+
+            aws s3 cp dist/ s3://smart-task-frontend/ \
+              --recursive \
+              --endpoint-url http://localhost:4566
+        '''
+    }
+}
