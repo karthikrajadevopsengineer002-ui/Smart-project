@@ -1,12 +1,6 @@
 pipeline {
     agent any
 
-    environment {
-        HARBOR_URL = '13.49.183.17'
-        HARBOR_PROJECT = 'smart-task-management-system'
-        IMAGE_TAG = 'latest'
-    }
-
     stages {
 
         stage('Install Dependencies') {
@@ -35,38 +29,32 @@ pipeline {
             }
         }
 
-        stage('Verify Images') {
+        stage('Verify Docker Images') {
             steps {
-                sh 'docker images | grep smart-task'
+                sh '''
+                    docker images | grep smart-task
+                '''
             }
         }
 
-        stage('Push Images to Harbor') {
+        stage('Deploy to Kubernetes') {
             steps {
-                withCredentials([
-                    usernamePassword(
-                        credentialsId: 'harbor-credentials',
-                        usernameVariable: 'HARBOR_USER',
-                        passwordVariable: 'HARBOR_PASSWORD'
-                    )
-                ]) {
-                    sh '''
-                        echo "$HARBOR_PASSWORD" | docker login "$HARBOR_URL" \
-                          -u "$HARBOR_USER" --password-stdin
+                sh '''
+                    minikube image load smart-task-auth:latest
+                    minikube image load smart-task-task:latest
 
-                        docker tag smart-task-auth:latest \
-                          $HARBOR_URL/$HARBOR_PROJECT/smart-task-auth:$IMAGE_TAG
+                    kubectl apply -f kubernetes/
+                '''
+            }
+        }
 
-                        docker tag smart-task-task:latest \
-                          $HARBOR_URL/$HARBOR_PROJECT/smart-task-task:$IMAGE_TAG
-
-                        docker push \
-                          $HARBOR_URL/$HARBOR_PROJECT/smart-task-auth:$IMAGE_TAG
-
-                        docker push \
-                          $HARBOR_URL/$HARBOR_PROJECT/smart-task-task:$IMAGE_TAG
-                    '''
-                }
+        stage('Verify Deployment') {
+            steps {
+                sh '''
+                    kubectl get deployments
+                    kubectl get pods
+                    kubectl get services
+                '''
             }
         }
     }
@@ -81,4 +69,6 @@ pipeline {
         }
     }
 }
+
+
 
