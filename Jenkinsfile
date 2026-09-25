@@ -1,6 +1,15 @@
 pipeline {
     agent any
 
+    environment {
+        AWS_DEFAULT_REGION = 'us-east-1'
+        AWS_ACCESS_KEY_ID = 'test'
+        AWS_SECRET_ACCESS_KEY = 'test'
+        AWS_ENDPOINT_URL = 'http://localhost:4566'
+
+        S3_BUCKET = 'smart-task-frontend'
+    }
+
     stages {
 
         stage('Install Dependencies') {
@@ -12,6 +21,9 @@ pipeline {
                     npm install
 
                     cd ../task-service
+                    npm install
+
+                    cd ../api-gateway_1784010924579
                     npm install
                 '''
             }
@@ -31,6 +43,11 @@ pipeline {
                       -f task-service/Dockerfile.deploy \
                       -t smart-task-task:latest \
                       task-service
+
+                    docker build \
+                      -f api-gateway_1784010924579/Dockerfile.deploy \
+                      -t smart-task-api-gateway:latest \
+                      api-gateway_1784010924579
                 '''
             }
         }
@@ -50,61 +67,37 @@ pipeline {
 
                     minikube image load smart-task-auth:latest
                     minikube image load smart-task-task:latest
+                    minikube image load smart-task-api-gateway:latest
                 '''
             }
         }
 
-        stage('Deploy to Kubernetes') {
+        stage('Deploy Kubernetes') {
             steps {
                 sh '''
                     set -e
 
-                    echo "Checking Kubernetes..."
-                    kubectl get nodes
-
-                    echo "Creating namespace..."
                     kubectl apply -f kubernetes/namespace.yaml
-
-                    echo "Waiting for namespace..."
-                    kubectl wait \
-                      --for=jsonpath='{.status.phase}'=Active \
-                      namespace/smart-task \
-                      --timeout=60s
-
-                    echo "Creating secret..."
                     kubectl apply -f kubernetes/secret.yaml
 
-                    echo "Applying remaining Kubernetes manifests..."
+                    kubectl apply -f kubernetes/auth-service-deployment.yaml
+                    kubectl apply -f kubernetes/auth-service-service.yaml
 
-                    for file in kubernetes/*.yaml
-                    do
-                        case "$file" in
-                            kubernetes/namespace.yaml)
-                                ;;
-                            kubernetes/secret.yaml)
-                                ;;
-                            *)
-                                echo "Applying $file"
-                                kubectl apply -f "$file"
-                                ;;
-                        esac
-                    done
+                    kubectl apply -f kubernetes/task-service-deployment.yaml
+                    kubectl apply -f kubernetes/task-service-service.yaml
+
+                    kubectl apply -f kubernetes/api-gateway-deployment.yaml
+                    kubectl apply -f kubernetes/api-gateway-service.yaml
+
+                    kubectl apply -f kubernetes/configmap.yaml
+                    kubectl apply -f kubernetes/ingress.yaml
                 '''
             }
         }
 
-        stage('Verify Deployment') {
+        stage('Verify Kubernetes') {
             steps {
                 sh '''
-                    echo "===== NODES ====="
-                    kubectl get nodes
-
-                    echo "===== NAMESPACE ====="
-                    kubectl get namespace smart-task
-
-                    echo "===== DEPLOYMENTS ====="
-                    kubectl get deployments -n smart-task
-
                     echo "===== PODS ====="
                     kubectl get pods -n smart-task
 
@@ -116,49 +109,38 @@ pipeline {
                 '''
             }
         }
+
+        stage('Frontend Build and S3 Deploy') {
+            steps {
+                sh '''
+                    set -e
+
+                    cd frontend
+
+                    npm install
+                    npm run build
+
+                    aws s3 cp dist/ s3://$S3_BUCKET/ \
+                      --recursive \
+                      --endpoint-url $AWS_ENDPOINT_URL
+                '''
+            }
+        }
     }
 
     post {
         success {
+            echo '======================================'
             echo 'Pipeline Executed Successfully'
+            echo 'Backend + Kubernetes + Frontend deployed'
+            echo '======================================'
         }
 
         failure {
+            echo '======================================'
             echo 'Pipeline Failed'
-        }
-    }
-} 
-stages {
-
-    stage('Install Dependencies') {
-        steps {
-            // ...
-        }
-    }
-
-    stage('Docker Build') {
-        steps {
-            // ...
-        }
-    }
-
-    stage('Verify Deployment') {
-        steps {
-            // ...
-        }
-    }
-
-    stage('Frontend Build and S3 Deploy') {
-        steps {
-            sh '''
-                cd frontend
-                npm install
-                npm run build
-
-                aws s3 cp dist/ s3://smart-task-frontend/ \
-                  --recursive \
-                  --endpoint-url http://localhost:4566
-            '''
+            echo 'Check the failed stage above'
+            echo '======================================'
         }
     }
 }
