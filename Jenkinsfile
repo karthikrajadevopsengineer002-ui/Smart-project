@@ -151,28 +151,23 @@ pipeline {
 
         stage('Frontend Build and S3 Deploy') {
             steps {
-                withCredentials([
-                    [$class: 'AmazonWebServicesCredentialsBinding',
-                     credentialsId: 'aws-smart-task']
-                ]) {
-                    sh '''
-                        set -e
+                sh '''
+                    set -e
 
-                        echo "===== FRONTEND BUILD ====="
+                    echo "===== FRONTEND BUILD ====="
 
-                        cd frontend
+                    cd frontend
 
-                        npm install
-                        npm run build
+                    npm install
+                    npm run build
 
-                        echo "===== UPLOADING FRONTEND TO AWS S3 ====="
+                    echo "===== UPLOADING FRONTEND TO AWS S3 ====="
 
-                        aws s3 cp dist/ s3://$S3_BUCKET/ \
-                          --recursive
+                    aws s3 cp dist/ s3://$S3_BUCKET/ \
+                      --recursive
 
-                        echo "===== FRONTEND DEPLOYED TO AWS S3 ====="
-                    '''
-                }
+                    echo "===== FRONTEND DEPLOYED TO AWS S3 ====="
+                '''
             }
         }
 
@@ -195,7 +190,7 @@ pipeline {
                     curl -f http://localhost:5000/health
 
                     echo ""
-                    echo "===== S3 BUCKET ====="
+                    echo "===== S3 FILES ====="
 
                     aws s3 ls s3://$S3_BUCKET/
 
@@ -213,10 +208,11 @@ pipeline {
      SMART TASK DEPLOYMENT SUCCESS
 ========================================
 
+GitHub : CHECKED OUT
+Docker : IMAGES BUILT
 Backend : DEPLOYED
-Frontend : AWS S3
-Docker : RUNNING
 API : HEALTHY
+Frontend : AWS S3
 S3 : UPLOADED
 
 ========================================
