@@ -61,15 +61,15 @@ pipeline {
         }
         
         stage('Deploy Backend') {
-    steps {
-        sh '''
-            set -e
-            docker compose down
-            docker compose up -d --build
-            docker compose ps
-        '''
-    }
-}
+            steps {
+                sh '''
+                    set -e
+                     docker compose down
+                     docker compose up -d --build
+                     docker compose ps
+                '''
+             }
+         }
         
         stage('Frontend Build and S3 Deploy') {
             steps {
