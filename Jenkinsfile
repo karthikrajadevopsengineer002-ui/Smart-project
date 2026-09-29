@@ -4,6 +4,9 @@ pipeline {
     environment {
         AWS_DEFAULT_REGION = 'us-east-1'
         S3_BUCKET = 'smart-task-frontend'
+
+        // உன் actual CloudFront Distribution ID இங்கே
+        CLOUDFRONT_ID = 'YOUR_CLOUDFRONT_ID'
     }
 
     stages {
@@ -11,7 +14,6 @@ pipeline {
         stage('Checkout') {
             steps {
                 echo '===== CHECKOUT SOURCE CODE ====='
-
                 checkout scm
             }
         }
@@ -19,49 +21,66 @@ pipeline {
         stage('Install Dependencies') {
             steps {
                 sh '''
-                    set -e
+                set -e
 
-                    echo "===== INSTALLING BACKEND DEPENDENCIES ====="
+                echo "===== INSTALLING BACKEND DEPENDENCIES ====="
 
-                    cd auth-service_1784011000189
-                    npm install
+                cd auth-service_1784011000189
+                npm install
 
-                    cd ../task-service
-                    npm install
+                cd ../task-service
+                npm install
 
-                    cd ../api-gateway_1784010924579
-                    npm install
+                cd ../notification-service
+                npm install
 
-                    echo "===== DEPENDENCIES INSTALLED ====="
+                cd ../report-service
+                npm install
+
+                cd ../api-gateway_1784010924579
+                npm install
+
+                echo "===== DEPENDENCIES INSTALLED ====="
                 '''
             }
         }
 
-        stage('Docker Build') {
+        stage('Docker Build - 5 Services') {
             steps {
                 sh '''
-                    set -e
+                set -e
 
-                    echo "===== BUILD AUTH IMAGE ====="
+                echo "===== BUILD AUTH ====="
+                docker build \
+                  -f auth-service_1784011000189/Dockerfile.deploy \
+                  -t smart-task-auth:latest \
+                  auth-service_1784011000189
 
-                    docker build \
-                      -f auth-service_1784011000189/Dockerfile.deploy \
-                      -t smart-task-auth:latest \
-                      auth-service_1784011000189
+                echo "===== BUILD TASK ====="
+                docker build \
+                  -f task-service/Dockerfile.deploy \
+                  -t smart-task-task:latest \
+                  task-service
 
-                    echo "===== BUILD TASK IMAGE ====="
+                echo "===== BUILD NOTIFICATION ====="
+                docker build \
+                  -f notification-service/Dockerfile \
+                  -t smart-task-notification:latest \
+                  notification-service
 
-                    docker build \
-                      -f task-service/Dockerfile.deploy \
-                      -t smart-task-task:latest \
-                      task-service
+                echo "===== BUILD REPORT ====="
+                docker build \
+                  -f report-service/Dockerfile \
+                  -t smart-task-report:latest \
+                  report-service
 
-                    echo "===== BUILD API GATEWAY IMAGE ====="
+                echo "===== BUILD API GATEWAY ====="
+                docker build \
+                  -f api-gateway_1784010924579/Dockerfile.deploy \
+                  -t smart-task-api-gateway:latest \
+                  api-gateway_1784010924579
 
-                    docker build \
-                      -f api-gateway_1784010924579/Dockerfile.deploy \
-                      -t smart-task-api-gateway:latest \
-                      api-gateway_1784010924579
+                echo "===== ALL 5 SERVICES BUILT ====="
                 '''
             }
         }
@@ -69,9 +88,8 @@ pipeline {
         stage('Verify Docker Images') {
             steps {
                 sh '''
-                    echo "===== DOCKER IMAGES ====="
-
-                    docker images | grep smart-task || true
+                echo "===== DOCKER IMAGES ====="
+                docker images | grep smart-task
                 '''
             }
         }
@@ -79,156 +97,149 @@ pipeline {
         stage('Clean Existing Deployment') {
             steps {
                 sh '''
-                    echo "===== STOPPING EXISTING COMPOSE STACK ====="
+                echo "===== STOPPING EXISTING STACK ====="
 
-                    docker compose down --remove-orphans || true
+                docker compose down --remove-orphans || true
 
-                    echo "===== REMOVING OLD SMART-TASK CONTAINERS ====="
+                docker rm -f \
+                  smart-project-auth-service \
+                  smart-project-task-service \
+                  smart-project-api-gateway \
+                  smart-project-notification-service \
+                  smart-project-report-service \
+                  smart-project-mongodb \
+                  smart-project-frontend \
+                  auth-service \
+                  task-service \
+                  api-gateway \
+                  notification-service \
+                  report-service \
+                  mongodb \
+                  frontend 2>/dev/null || true
 
-                    docker rm -f \
-                      smart-project-auth-service \
-                      smart-project-task-service \
-                      smart-project-api-gateway \
-                      smart-project-notification-service \
-                      smart-project-report-service \
-                      smart-project-mongodb \
-                      smart-project-frontend \
-                      auth-service \
-                      task-service \
-                      api-gateway \
-                      notification-service \
-                      report-service \
-                      mongodb \
-                      frontend \
-                      2>/dev/null || true
-
-                    echo "===== CLEANUP COMPLETE ====="
-
-                    docker ps --format "table {{.Names}}\\t{{.Status}}\\t{{.Ports}}"
+                echo "===== CLEANUP COMPLETE ====="
                 '''
             }
         }
 
-        stage('Deploy Backend') {
+        stage('Deploy 5 Backend Services') {
             steps {
                 sh '''
-                    set -e
+                set -e
 
-                    echo "===== DEPLOYING DOCKER COMPOSE ====="
+                echo "===== DEPLOYING 5 BACKEND SERVICES ====="
 
-                    docker compose up -d --build --force-recreate --remove-orphans
+                docker compose up -d --build --force-recreate --remove-orphans
 
-                    echo "===== WAITING FOR CONTAINERS ====="
-
-                    sleep 15
-
-                    echo "===== COMPOSE STATUS ====="
-
-                    docker compose ps
+                echo "===== CONTAINERS ====="
+                docker ps --format "table {{.Names}}\\t{{.Status}}\\t{{.Ports}}"
                 '''
             }
         }
 
-        stage('Verify Backend') {
+        stage('Backend Health Check') {
             steps {
                 sh '''
-                    set -e
+                set -e
 
-                    echo "===== RUNNING CONTAINERS ====="
+                echo "===== API HEALTH CHECK ====="
 
-                    docker ps --format "table {{.Names}}\\t{{.Status}}\\t{{.Ports}}"
+                sleep 10
 
-                    echo "===== API HEALTH CHECK ====="
+                curl -f http://localhost:5000/health
 
-                    curl -f http://localhost:5000/health
+                echo ""
+                echo "===== PORT CHECK ====="
 
-                    echo ""
+                for PORT in 5000 5001 5002 5003 5004
+                do
+                    if nc -z localhost $PORT; then
+                        echo "PORT $PORT : RUNNING"
+                    else
+                        echo "PORT $PORT : FAILED"
+                        exit 1
+                    fi
+                done
 
-                    echo "===== BACKEND IS HEALTHY ====="
+                echo "===== ALL 5 SERVICES HEALTHY ====="
                 '''
             }
         }
 
-        stage('Frontend Build and S3 Deploy') {
+        stage('Build Frontend') {
             steps {
                 sh '''
-                    set -e
+                set -e
 
-                    echo "===== FRONTEND BUILD ====="
+                echo "===== BUILD FRONTEND ====="
 
-                    cd frontend
+                cd frontend
 
-                    npm install
-                    npm run build
+                npm install
+                npm run build
 
-                    echo "===== UPLOADING FRONTEND TO AWS S3 ====="
-
-                    aws s3 cp dist/ s3://$S3_BUCKET/ \
-                      --recursive
-
-                    echo "===== FRONTEND DEPLOYED TO AWS S3 ====="
+                echo "===== FRONTEND BUILD COMPLETE ====="
+                ls -la dist/
                 '''
             }
         }
 
-        stage('Final Verification') {
+        stage('Deploy Frontend to S3') {
             steps {
                 sh '''
-                    set -e
+                set -e
 
-                    echo "======================================"
-                    echo " FINAL DEPLOYMENT CHECK"
-                    echo "======================================"
+                echo "===== UPLOAD FRONTEND TO S3 ====="
 
-                    echo "===== DOCKER CONTAINERS ====="
+                aws s3 sync frontend/dist/ \
+                  s3://$S3_BUCKET/ \
+                  --delete
 
-                    docker compose ps
-
-                    echo ""
-                    echo "===== API HEALTH ====="
-
-                    curl -f http://localhost:5000/health
-
-                    echo ""
-                    echo "===== S3 FILES ====="
-
-                    aws s3 ls s3://$S3_BUCKET/
-
-                    echo ""
-                    echo "===== DEPLOYMENT COMPLETED ====="
+                echo "===== FRONTEND UPLOADED TO S3 ====="
                 '''
             }
         }
-    }
 
-    post {
-        success {
-            echo '''
-========================================
-     SMART TASK DEPLOYMENT SUCCESS
-========================================
+        stage('CloudFront Invalidation') {
+            steps {
+                sh '''
+                set -e
 
-GitHub : CHECKED OUT
-Docker : IMAGES BUILT
-Backend : DEPLOYED
-API : HEALTHY
-Frontend : AWS S3
-S3 : UPLOADED
+                echo "===== CLOUDFRONT INVALIDATION ====="
 
-========================================
-'''
+                if [ "$CLOUDFRONT_ID" != "YOUR_CLOUDFRONT_ID" ]; then
+
+                    aws cloudfront create-invalidation \
+                      --distribution-id "$CLOUDFRONT_ID" \
+                      --paths "/*"
+
+                    echo "===== CLOUDFRONT CACHE INVALIDATED ====="
+
+                else
+                    echo "CloudFront ID not configured - skipping invalidation"
+                fi
+                '''
+            }
         }
 
-        failure {
-            echo '''
-========================================
-       SMART TASK DEPLOYMENT FAILED
-========================================
-
-Check the failed stage above.
-
-========================================
-'''
+        stage('Final Status') {
+            steps {
+                sh '''
+                echo ""
+                echo "======================================"
+                echo " SMART TASK DEPLOYMENT SUCCESS"
+                echo "======================================"
+                echo "GitHub : CHECKED OUT"
+                echo "Auth : DEPLOYED - 5001"
+                echo "Task : DEPLOYED - 5002"
+                echo "Notification : DEPLOYED - 5003"
+                echo "Report : DEPLOYED - 5004"
+                echo "API Gateway : DEPLOYED - 5000"
+                echo "Frontend : S3"
+                echo "CloudFront : ENABLED"
+                echo "======================================"
+                '''
+            }
         }
     }
 }
