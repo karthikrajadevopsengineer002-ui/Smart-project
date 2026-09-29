@@ -60,6 +60,17 @@ pipeline {
             }
         }
         
+        stage('Deploy Backend') {
+    steps {
+        sh '''
+            set -e
+            docker compose down
+            docker compose up -d --build
+            docker compose ps
+        '''
+    }
+}
+        
         stage('Frontend Build and S3 Deploy') {
             steps {
                 sh '''
@@ -82,7 +93,7 @@ pipeline {
         success {
             echo '======================================'
             echo 'Pipeline Executed Successfully'
-            echo 'Backend + Kubernetes + Frontend deployed'
+            echo 'Backend + Frontend deployed successfully'
             echo '======================================'
         }
 
