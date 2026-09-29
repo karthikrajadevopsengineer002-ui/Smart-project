@@ -55,22 +55,35 @@ pipeline {
         stage('Verify Docker Images') {
             steps {
                 sh '''
+                    set -e
                     docker images | grep smart-task
                 '''
             }
         }
-        
+
         stage('Deploy Backend') {
             steps {
                 sh '''
                     set -e
-                     docker compose down
-                     docker compose up -d --build
-                     docker compose ps
+
+                    echo "===== STOPPING EXISTING COMPOSE SERVICES ====="
+                    docker compose down || true
+
+                    echo "===== REMOVING OLD MONGODB CONTAINER ====="
+                    docker rm -f mongodb 2>/dev/null || true
+
+                    echo "===== DEPLOYING BACKEND ====="
+                    docker compose up -d --build
+
+                    echo "===== CONTAINER STATUS ====="
+                    docker compose ps
+
+                    echo "===== DOCKER CONTAINERS ====="
+                    docker ps --format "table {{.Names}}\\t{{.Status}}\\t{{.Ports}}"
                 '''
-             }
-         }
-        
+            }
+        }
+
         stage('Frontend Build and S3 Deploy') {
             steps {
                 sh '''
