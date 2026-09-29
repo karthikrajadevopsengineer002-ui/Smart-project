@@ -6,29 +6,36 @@ pipeline {
         AWS_ACCESS_KEY_ID = 'test'
         AWS_SECRET_ACCESS_KEY = 'test'
         AWS_ENDPOINT_URL = 'http://localhost:4566'
+
         S3_BUCKET = 'smart-task-frontend'
     }
 
     stages {
+
+        stage('Checkout') {
+            steps {
+                echo '===== CHECKOUT SOURCE CODE ====='
+                checkout scm
+            }
+        }
 
         stage('Install Dependencies') {
             steps {
                 sh '''
                     set -e
 
-                    echo "===== Installing Auth Dependencies ====="
+                    echo "===== INSTALLING BACKEND DEPENDENCIES ====="
+
                     cd auth-service_1784011000189
                     npm install
 
-                    echo "===== Installing Task Dependencies ====="
                     cd ../task-service
                     npm install
 
-                    echo "===== Installing API Gateway Dependencies ====="
                     cd ../api-gateway_1784010924579
                     npm install
 
-                    echo "===== Dependencies Installed ====="
+                    echo "===== DEPENDENCIES INSTALLED ====="
                 '''
             }
         }
@@ -38,25 +45,26 @@ pipeline {
                 sh '''
                     set -e
 
-                    echo "===== Building Auth Image ====="
+                    echo "===== BUILD AUTH IMAGE ====="
+
                     docker build \
                       -f auth-service_1784011000189/Dockerfile.deploy \
                       -t smart-task-auth:latest \
                       auth-service_1784011000189
 
-                    echo "===== Building Task Image ====="
+                    echo "===== BUILD TASK IMAGE ====="
+
                     docker build \
                       -f task-service/Dockerfile.deploy \
                       -t smart-task-task:latest \
                       task-service
 
-                    echo "===== Building API Gateway Image ====="
+                    echo "===== BUILD API GATEWAY IMAGE ====="
+
                     docker build \
                       -f api-gateway_1784010924579/Dockerfile.deploy \
                       -t smart-task-api-gateway:latest \
                       api-gateway_1784010924579
-
-                    echo "===== Docker Images Built Successfully ====="
                 '''
             }
         }
@@ -64,41 +72,42 @@ pipeline {
         stage('Verify Docker Images') {
             steps {
                 sh '''
-                    set -e
+                    echo "===== DOCKER IMAGES ====="
 
-                    echo "===== SMART TASK DOCKER IMAGES ====="
                     docker images | grep smart-task || true
-
-                    echo "===== DOCKER VERSION ====="
-                    docker --version
                 '''
             }
         }
 
-        stage('Clean Old Containers') {
+        stage('Clean Existing Deployment') {
             steps {
                 sh '''
-                    set +e
+                    echo "===== STOPPING EXISTING COMPOSE STACK ====="
 
-                    echo "===== Stopping Existing Smart Task Containers ====="
+                    docker compose down --remove-orphans || true
 
-                    docker compose down --remove-orphans
-
-                    echo "===== Removing Possible Old Containers ====="
+                    echo "===== REMOVING OLD SMART-TASK CONTAINERS ====="
 
                     docker rm -f \
-                        api-gateway \
-                        auth-service \
-                        task-service \
-                        notification-service \
-                        report-service \
-                        mongodb \
-                        frontend \
-                        2>/dev/null || true
+                      smart-project-auth-service \
+                      smart-project-task-service \
+                      smart-project-api-gateway \
+                      smart-project-notification-service \
+                      smart-project-report-service \
+                      smart-project-mongodb \
+                      smart-project-frontend \
+                      auth-service \
+                      task-service \
+                      api-gateway \
+                      notification-service \
+                      report-service \
+                      mongodb \
+                      frontend \
+                      2>/dev/null || true
 
-                    echo "===== Old Containers Cleaned ====="
+                    echo "===== CLEANUP COMPLETE ====="
 
-                    docker ps -a --format "table {{.Names}}\\t{{.Status}}"
+                    docker ps --format "table {{.Names}}\\t{{.Status}}\\t{{.Ports}}"
                 '''
             }
         }
@@ -108,18 +117,17 @@ pipeline {
                 sh '''
                     set -e
 
-                    echo "===== Deploying Smart Task Backend ====="
+                    echo "===== DEPLOYING DOCKER COMPOSE ====="
 
-                    docker compose up -d --build --force-recreate
+                    docker compose up -d --build --force-recreate --remove-orphans
 
-                    echo "===== Waiting For Containers ====="
+                    echo "===== WAITING FOR CONTAINERS ====="
+
                     sleep 15
 
-                    echo "===== Container Status ====="
-                    docker compose ps
+                    echo "===== COMPOSE STATUS ====="
 
-                    echo "===== Running Containers ====="
-                    docker ps --format "table {{.Names}}\\t{{.Status}}\\t{{.Ports}}"
+                    docker compose ps
                 '''
             }
         }
@@ -129,12 +137,17 @@ pipeline {
                 sh '''
                     set -e
 
-                    echo "===== Checking API Gateway ====="
+                    echo "===== RUNNING CONTAINERS ====="
+
+                    docker ps --format "table {{.Names}}\\t{{.Status}}\\t{{.Ports}}"
+
+                    echo "===== API HEALTH CHECK ====="
 
                     curl -f http://localhost:5000/health
 
                     echo ""
-                    echo "===== API Gateway Health Check Passed ====="
+
+                    echo "===== BACKEND IS HEALTHY ====="
                 '''
             }
         }
@@ -144,20 +157,20 @@ pipeline {
                 sh '''
                     set -e
 
-                    echo "===== Building Frontend ====="
+                    echo "===== FRONTEND BUILD ====="
 
                     cd frontend
 
                     npm install
                     npm run build
 
-                    echo "===== Deploying Frontend To S3 ====="
+                    echo "===== UPLOADING FRONTEND TO FLOCI S3 ====="
 
                     aws s3 cp dist/ s3://$S3_BUCKET/ \
                       --recursive \
                       --endpoint-url $AWS_ENDPOINT_URL
 
-                    echo "===== Frontend S3 Deployment Successful ====="
+                    echo "===== FRONTEND DEPLOYED ====="
                 '''
             }
         }
@@ -165,75 +178,48 @@ pipeline {
         stage('Final Verification') {
             steps {
                 sh '''
-                    set -e
-
                     echo "======================================"
                     echo " FINAL DEPLOYMENT CHECK"
                     echo "======================================"
 
-                    echo "===== Docker Containers ====="
+                    echo "===== DOCKER CONTAINERS ====="
+
                     docker compose ps
 
                     echo ""
-                    echo "===== API Health ====="
+                    echo "===== API HEALTH ====="
+
                     curl -f http://localhost:5000/health
 
                     echo ""
-                    echo "===== S3 Files ====="
-                    aws s3 ls s3://$S3_BUCKET/ \
-                      --endpoint-url $AWS_ENDPOINT_URL
-
-                    echo ""
-                    echo "======================================"
-                    echo " DEPLOYMENT VERIFICATION PASSED"
-                    echo "======================================"
+                    echo "===== DEPLOYMENT COMPLETED ====="
                 '''
             }
         }
     }
 
     post {
-
         success {
             echo '''
-==========================================
-       PIPELINE EXECUTED SUCCESSFULLY
-==========================================
-GitHub
-   ↓
-Jenkins
-   ↓
-Dependencies
-   ↓
-Docker Build
-   ↓
-Docker Compose Deployment
-   ↓
-Backend Health Check
-   ↓
-Frontend Build
-   ↓
-Floci S3 Deployment
-   ↓
-Final Verification
-
-Backend + Frontend deployed successfully.
-==========================================
+========================================
+     SMART TASK DEPLOYMENT SUCCESS
+========================================
+Backend : DEPLOYED
+Frontend : DEPLOYED
+Docker : RUNNING
+API : HEALTHY
+========================================
 '''
         }
 
         failure {
             echo '''
-==========================================
-          PIPELINE FAILED
-==========================================
+========================================
+       SMART TASK DEPLOYMENT FAILED
+========================================
 Check the failed stage above.
-==========================================
+========================================
 '''
-        }
-
-        always {
-            echo "===== Pipeline Completed ====="
         }
     }
 }
