@@ -3,10 +3,6 @@ pipeline {
 
     environment {
         AWS_DEFAULT_REGION = 'us-east-1'
-        AWS_ACCESS_KEY_ID = 'test'
-        AWS_SECRET_ACCESS_KEY = 'test'
-        AWS_ENDPOINT_URL = 'http://localhost:4566'
-
         S3_BUCKET = 'smart-task-frontend'
     }
 
@@ -15,6 +11,7 @@ pipeline {
         stage('Checkout') {
             steps {
                 echo '===== CHECKOUT SOURCE CODE ====='
+
                 checkout scm
             }
         }
@@ -154,30 +151,36 @@ pipeline {
 
         stage('Frontend Build and S3 Deploy') {
             steps {
-                sh '''
-                    set -e
+                withCredentials([
+                    [$class: 'AmazonWebServicesCredentialsBinding',
+                     credentialsId: 'aws-smart-task']
+                ]) {
+                    sh '''
+                        set -e
 
-                    echo "===== FRONTEND BUILD ====="
+                        echo "===== FRONTEND BUILD ====="
 
-                    cd frontend
+                        cd frontend
 
-                    npm install
-                    npm run build
+                        npm install
+                        npm run build
 
-                    echo "===== UPLOADING FRONTEND TO FLOCI S3 ====="
+                        echo "===== UPLOADING FRONTEND TO AWS S3 ====="
 
-                    aws s3 cp dist/ s3://$S3_BUCKET/ \
-                      --recursive \
-                      --endpoint-url $AWS_ENDPOINT_URL
+                        aws s3 cp dist/ s3://$S3_BUCKET/ \
+                          --recursive
 
-                    echo "===== FRONTEND DEPLOYED ====="
-                '''
+                        echo "===== FRONTEND DEPLOYED TO AWS S3 ====="
+                    '''
+                }
             }
         }
 
         stage('Final Verification') {
             steps {
                 sh '''
+                    set -e
+
                     echo "======================================"
                     echo " FINAL DEPLOYMENT CHECK"
                     echo "======================================"
@@ -192,6 +195,11 @@ pipeline {
                     curl -f http://localhost:5000/health
 
                     echo ""
+                    echo "===== S3 BUCKET ====="
+
+                    aws s3 ls s3://$S3_BUCKET/
+
+                    echo ""
                     echo "===== DEPLOYMENT COMPLETED ====="
                 '''
             }
@@ -204,10 +212,13 @@ pipeline {
 ========================================
      SMART TASK DEPLOYMENT SUCCESS
 ========================================
+
 Backend : DEPLOYED
-Frontend : DEPLOYED
+Frontend : AWS S3
 Docker : RUNNING
 API : HEALTHY
+S3 : UPLOADED
+
 ========================================
 '''
         }
@@ -217,7 +228,9 @@ API : HEALTHY
 ========================================
        SMART TASK DEPLOYMENT FAILED
 ========================================
+
 Check the failed stage above.
+
 ========================================
 '''
         }
