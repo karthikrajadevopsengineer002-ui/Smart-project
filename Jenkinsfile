@@ -1,159 +1,88 @@
 pipeline {
-
     agent any
 
     environment {
-        SONARQUBE = 'SonarQube'
-
-        HARBOR_URL = 'YOUR_HARBOR_URL'
-        HARBOR_PROJECT = 'smart-task'
-
-        IMAGE_TAG = "${BUILD_NUMBER}"
-        K8S_NAMESPACE = 'smart-task'
+        AWS_CREDENTIALS= credentials('aws-id')
+        AWS_REGION= 'us-east-1'
+        DOCKER_HUB_USER = 'giriprasathp'
+        DOCKER_TAG = "v${BUILD_NUMBER}"
+        EC2_HOST = '34.200.219.181'
+        //PEM_KEY_PATH= '/home/ubuntu/keys/backend.pem'
+        EC2_USER = 'ubuntu'
     }
 
     stages {
-
         stage('Checkout') {
             steps {
-                git branch: 'main',
-                    credentialsId: 'github-smart-task',
-                    url: 'YOUR_GITHUB_REPO_URL'
+                checkout scm
             }
         }
 
-        stage('Install Backend Dependencies') {
+        stage('Build Backend Images') {
             steps {
-                sh '''
-                    set -e
-
-                    for service in \
-                    auth-service \
-                    task-service \
-                    notification-service \
-                    report-service \
-                    api-gateway
-                    do
-                        if [ -f "$service/package.json" ]; then
-                            echo "Installing $service"
-                            cd "$service"
-                            npm install
-                            cd ..
-                        fi
-                    done
-                '''
-            }
-        }
-
-        stage('SonarQube Analysis') {
-            steps {
-                withSonarQubeEnv('SonarQube') {
+                script {
+                    echo "Building Microservices Docker Image"
                     sh '''
-                        sonar-scanner \
-                        -Dsonar.projectKey=smart-task \
-                        -Dsonar.projectName=Smart-Task \
-                        -Dsonar.sources=.
+                    docker build -t $DOCKER_HUB_USER/smarttask-api-gateway:$DOCKER_TAG ./api-gateway_1784010924579
+                    docker build -t $DOCKER_HUB_USER/smarttask-auth-service:$DOCKER_TAG ./auth-service_1784011000189
+                    docker build -t $DOCKER_HUB_USER/smarttask-task-service:$DOCKER_TAG ./task-service
+                    docker build -t $DOCKER_HUB_USER/smarttask-notification-service:$DOCKER_TAG ./notification-service
+                    docker build -t $DOCKER_HUB_USER/smarttask-report-service:$DOCKER_TAG ./report-service
+                    
+                    docker tag $DOCKER_HUB_USER/smarttask-api-gateway:$DOCKER_TAG $DOCKER_HUB_USER/smarttask-api-gateway:latest
+                    docker tag $DOCKER_HUB_USER/smarttask-auth-service:$DOCKER_TAG $DOCKER_HUB_USER/smarttask-auth-service:latest
+                    docker tag $DOCKER_HUB_USER/smarttask-task-service:$DOCKER_TAG $DOCKER_HUB_USER/smarttask-task-service:latest
+                    docker tag $DOCKER_HUB_USER/smarttask-notification-service:$DOCKER_TAG $DOCKER_HUB_USER/smarttask-notification-service:latest
+                    
+                    docker tag $DOCKER_HUB_USER/smarttask-report-service:$DOCKER_TAG $DOCKER_HUB_USER/smarttask-report-service:latest
                     '''
                 }
             }
         }
 
-        stage('Quality Gate') {
+        stage('Push to Docker Hub') {
             steps {
-                timeout(time: 5, unit: 'MINUTES') {
-                    waitForQualityGate abortPipeline: true
-                }
-            }
-        }
-
-        stage('Docker Build - 5 Services') {
-            steps {
-                sh '''
-                    set -e
-
-                    docker build -t ${HARBOR_URL}/${HARBOR_PROJECT}/auth-service:${IMAGE_TAG} ./auth-service
-
-                    docker build -t ${HARBOR_URL}/${HARBOR_PROJECT}/task-service:${IMAGE_TAG} ./task-service
-
-                    docker build -t ${HARBOR_URL}/${HARBOR_PROJECT}/notification-service:${IMAGE_TAG} ./notification-service
-
-                    docker build -t ${HARBOR_URL}/${HARBOR_PROJECT}/report-service:${IMAGE_TAG} ./report-service
-
-                    docker build -t ${HARBOR_URL}/${HARBOR_PROJECT}/api-gateway:${IMAGE_TAG} ./api-gateway
-                '''
-            }
-        }
-
-        stage('Verify Docker Images') {
-            steps {
-                sh 'docker images'
-            }
-        }
-
-        stage('Harbor Login') {
-            steps {
-                withCredentials([
-                    usernamePassword(
-                        credentialsId: 'harbor-credentials',
-                        usernameVariable: 'HARBOR_USER',
-                        passwordVariable: 'HARBOR_PASS'
-                    )
-                ]) {
+                withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                     sh '''
-                        echo "$HARBOR_PASS" | docker login ${HARBOR_URL} \
-                        -u "$HARBOR_USER" \
-                        --password-stdin
+                    echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
+                    
+                    docker push $DOCKER_HUB_USER/smarttask-api-gateway:$DOCKER_TAG
+                    docker push $DOCKER_HUB_USER/smarttask-auth-service:$DOCKER_TAG
+                    docker push $DOCKER_HUB_USER/smarttask-task-service:$DOCKER_TAG
+                    docker push $DOCKER_HUB_USER/smarttask-notification-service:$DOCKER_TAG
+                    docker push $DOCKER_HUB_USER/smarttask-report-service:$DOCKER_TAG
+                    
+                    docker push $DOCKER_HUB_USER/smarttask-api-gateway:latest
+                    docker push $DOCKER_HUB_USER/smarttask-auth-service:latest
+                    docker push $DOCKER_HUB_USER/smarttask-task-service:latest
+                    docker push $DOCKER_HUB_USER/smarttask-notification-service:latest
+                    docker push $DOCKER_HUB_USER/smarttask-report-service:latest
                     '''
                 }
             }
         }
 
-        stage('Push Images to Harbor') {
-            steps {
-                sh '''
-                    docker push ${HARBOR_URL}/${HARBOR_PROJECT}/auth-service:${IMAGE_TAG}
-                    docker push ${HARBOR_URL}/${HARBOR_PROJECT}/task-service:${IMAGE_TAG}
-                    docker push ${HARBOR_URL}/${HARBOR_PROJECT}/notification-service:${IMAGE_TAG}
-                    docker push ${HARBOR_URL}/${HARBOR_PROJECT}/report-service:${IMAGE_TAG}
-                    docker push ${HARBOR_URL}/${HARBOR_PROJECT}/api-gateway:${IMAGE_TAG}
-                '''
+        stage('Deploy to EC2') {
+          steps {
+                sshagent(['ec2-ssh-key']) {
+                  sh '''
+                    ssh -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST "
+                      cd devops-flow
+                      git pull origin main
+                      docker compose pull
+                      docker compose down
+                      docker compose up -d --remove-orphans
+                      docker ps
+                    "
+                  '''
+                    
+                }
             }
-        }
 
-        stage('Kubernetes Deploy') {
-            steps {
-                sh '''
-                    kubectl create namespace ${K8S_NAMESPACE} \
-                    --dry-run=client -o yaml | kubectl apply -f -
-
-                    kubectl apply -f k8s/ -n ${K8S_NAMESPACE}
-                '''
             }
-        }
+    
 
-        stage('Verify Kubernetes') {
-            steps {
-                sh '''
-                    echo "===== PODS ====="
-                    kubectl get pods -n ${K8S_NAMESPACE}
-
-                    echo "===== SERVICES ====="
-                    kubectl get svc -n ${K8S_NAMESPACE}
-
-                    echo "===== DEPLOYMENTS ====="
-                    kubectl get deployments -n ${K8S_NAMESPACE}
-                '''
-            }
-        }
-    }
-
-    post {
-        success {
-            echo 'SMART TASK BACKEND DEPLOYMENT SUCCESS'
-        }
-
-        failure {
-            echo 'BACKEND DEPLOYMENT FAILED - CHECK CONSOLE OUTPUT'
-        }
     }
 }
+ 
+
